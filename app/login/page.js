@@ -92,6 +92,8 @@ export default function LoginPage() {
             </label>
 
             {error && (
+              <div className="text-xs text-term-danger border border-term-danger bg-red-950/30 rounded-md px-3 py-2">
+                ERROR: {error}
               </div>
             )}
             {info && (
@@ -123,5 +125,3 @@ export default function LoginPage() {
     </div>
   );
 }
-              <div className="text-xs text-term-danger border border-term-danger bg-red-950/30 rounded-md px-3 py-2">
-                ERROR: {error}
