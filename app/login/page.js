@@ -1,8 +1,7 @@
-
 "use client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "../../lib/supabaseClient";
+import { supabase, supabaseConfigured } from "../../lib/supabaseClient";
 import { Terminal } from "lucide-react";
 
 export default function LoginPage() {
@@ -59,6 +58,14 @@ export default function LoginPage() {
             {mode === "login" ? "> введите email и пароль" : "> регистрация нового аккаунта"}
           </p>
 
+          {!supabaseConfigured && (
+            <div className="text-xs text-yellow-400 border border-yellow-400 bg-yellow-950/30 rounded-md px-3 py-2 mt-3">
+              [!] Ключи Supabase не настроены. Проверьте .env.local (локально) или
+              Environment Variables в Vercel → потом пересоберите сайт (Redeploy /
+              npx vercel --prod).
+            </div>
+          )}
+
           <form onSubmit={submit} className="flex flex-col gap-3 mt-5">
             <label className="text-xs text-term-muted font-bold flex flex-col gap-1">
               EMAIL
@@ -85,8 +92,6 @@ export default function LoginPage() {
             </label>
 
             {error && (
-              <div className="text-xs text-term-danger border border-term-danger bg-red-950/30 rounded-md px-3 py-2">
-                ERROR: {error}
               </div>
             )}
             {info && (
@@ -118,3 +123,5 @@ export default function LoginPage() {
     </div>
   );
 }
+              <div className="text-xs text-term-danger border border-term-danger bg-red-950/30 rounded-md px-3 py-2">
+                ERROR: {error}
