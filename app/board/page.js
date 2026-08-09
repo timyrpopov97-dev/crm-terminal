@@ -134,6 +134,11 @@ export default function BoardPage() {
   const [ratesLoading, setRatesLoading] = useState(false);
   const [ratesError, setRatesError] = useState("");
 
+  // standalone converter widget state
+  const [converterAmount, setConverterAmount] = useState("100");
+  const [converterFrom, setConverterFrom] = useState("UAH");
+  const [converterTo, setConverterTo] = useState("USDT");
+
   const [draggingId, setDraggingId] = useState(null);
   const [ghostRect, setGhostRect] = useState(null);
   const [hoverStage, setHoverStage] = useState(null);
@@ -441,6 +446,63 @@ export default function BoardPage() {
             <span>курс: {ratesAgeLabel()}</span>
           )}
         </button>
+      </div>
+
+      {/* standalone live currency converter */}
+      <div className="border border-term-border rounded-xl bg-term-panel p-3.5 mb-4 max-w-xl">
+        <div className="flex items-center gap-1.5 text-[11px] text-term-muted mb-2.5">
+          <Terminal size={12} /> ./convert.sh — конвертер по актуальному курсу
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <input
+            type="number"
+            step="any"
+            value={converterAmount}
+            onChange={(e) => setConverterAmount(e.target.value)}
+            className="bg-black/40 border border-term-border rounded-md px-2.5 py-2 text-sm text-term-text w-28"
+            placeholder="100"
+          />
+          <select
+            value={converterFrom}
+            onChange={(e) => setConverterFrom(e.target.value)}
+            className="bg-black/40 border border-term-border rounded-md px-2 py-2 text-sm text-term-text"
+          >
+            {CURRENCY_ORDER.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+          <span className="text-term-muted text-sm">→</span>
+          <select
+            value={converterTo}
+            onChange={(e) => setConverterTo(e.target.value)}
+            className="bg-black/40 border border-term-border rounded-md px-2 py-2 text-sm text-term-text"
+          >
+            {CURRENCY_ORDER.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+          <button
+            onClick={() => { const t = converterFrom; setConverterFrom(converterTo); setConverterTo(t); }}
+            className="border border-term-border rounded-md p-2 text-term-muted"
+            title="Поменять местами"
+          >
+            <RefreshCw size={13} />
+          </button>
+        </div>
+
+        <div className="mt-3 text-lg font-bold text-term-accent">
+          {rates
+            ? formatMoney(convert(converterAmount, converterFrom, converterTo, rates), converterTo, rates, converterTo)
+            : "загрузка курса…"}
+        </div>
+        {rates && rates[converterFrom] && rates[converterTo] && (
+          <div className="text-[11px] text-term-muted mt-1">
+            1 {converterFrom} = {(rates[converterTo] / rates[converterFrom]).toLocaleString("ru-RU", { maximumFractionDigits: 6 })} {converterTo}
+          </div>
+        )}
+        {ratesError && (
+          <div className="text-[11px] text-term-danger mt-1">курс не загрузился: {ratesError}</div>
+        )}
       </div>
 
       <div className="flex items-center gap-2 bg-term-panel border border-term-border rounded-lg px-3 py-2 mb-4 max-w-md">
