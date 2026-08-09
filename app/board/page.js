@@ -5,29 +5,73 @@ import { supabase } from "../../lib/supabaseClient";
 import {
   Phone, Mail, Plus, X, Trash2, Search, Building2, Banknote,
   GripVertical, Zap, FileText, Copy, MessageCircle, Send,
-  CalendarClock, LogOut, Terminal,
+  CalendarClock, LogOut, Terminal, Pencil, Check, RefreshCw,
 } from "lucide-react";
 
-const STAGES = [
+const STAGE_DEFAULTS = [
   { id: "lead", label: "ЛИД", note: "первый контакт" },
   { id: "negotiation", label: "ПЕРЕГОВОРЫ", note: "обсуждение" },
   { id: "won", label: "ЗАКРЫТО", note: "сделка заключена" },
   { id: "lost", label: "ОТКАЗ", note: "не сложилось" },
 ];
 
+// "rates" convention: units of that currency equal to 1 USD.
+// convert(amount, from, to) = (amount / rates[from]) * rates[to]
 const CURRENCIES = {
-  UAH: { symbol: "₴" },
-  USD: { symbol: "$" },
-  EUR: { symbol: "€" },
+  UAH: { symbol: "₴", decimals: 0, kind: "fiat" },
+  USD: { symbol: "$", decimals: 2, kind: "fiat" },
+  EUR: { symbol: "€", decimals: 2, kind: "fiat" },
+  BTC: { symbol: "₿", decimals: 6, kind: "crypto" },
+  ETH: { symbol: "Ξ", decimals: 5, kind: "crypto" },
+  USDT: { symbol: "₮", decimals: 2, kind: "crypto" },
 };
+const CURRENCY_ORDER = ["UAH", "USD", "EUR", "BTC", "ETH", "USDT"];
 
 const MOVE_THRESHOLD = 9;
 const FLY_MS = 220;
 const EMPTY_FORM = { name: "", company: "", phone: "", email: "", amount: "", description: "" };
+const RATES_TTL_MS = 5 * 60 * 1000; // refetch rates at most every 5 minutes
 
-function formatMoney(n, currency) {
-  const num = Number(n) || 0;
-  return num.toLocaleString("ru-RU") + " " + (CURRENCIES[currency]?.symbol || "");
+function convert(amount, fromCode, toCode, rates) {
+  const num = Number(amount) || 0;
+  if (!rates || fromCode === toCode) return num;
+  const fromRate = rates[fromCode];
+  const toRate = rates[toCode];
+  if (!fromRate || !toRate) return num;
+  return (num / fromRate) * toRate;
+}
+
+function formatMoney(amount, currency, rates, fromCurrency) {
+  const conf = CURRENCIES[currency] || CURRENCIES.UAH;
+  const converted = fromCurrency ? convert(amount, fromCurrency, currency, rates) : Number(amount) || 0;
+  return (
+    converted.toLocaleString("ru-RU", {
+      minimumFractionDigits: conf.decimals,
+      maximumFractionDigits: conf.decimals,
+    }) +
+    " " +
+    conf.symbol
+  );
+}
+
+async function fetchRates() {
+  const [fiatRes, cryptoRes] = await Promise.all([
+    fetch("https://open.er-api.com/v6/latest/USD"),
+    fetch("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,tether&vs_currencies=usd"),
+  ]);
+  if (!fiatRes.ok || !cryptoRes.ok) throw new Error("Не удалось получить курсы");
+  const fiat = await fiatRes.json();
+  const crypto = await cryptoRes.json();
+  if (fiat.result !== "success") throw new Error("Ошибка курсов валют");
+
+  return {
+    USD: 1,
+    UAH: fiat.rates.UAH,
+    EUR: fiat.rates.EUR,
+    BTC: crypto.bitcoin?.usd ? 1 / crypto.bitcoin.usd : null,
+    ETH: crypto.ethereum?.usd ? 1 / crypto.ethereum.usd : null,
+    USDT: crypto.tether?.usd ? 1 / crypto.tether.usd : 1,
+  };
 }
 
 function digitsOnly(phone) {
@@ -79,17 +123,46 @@ export default function BoardPage() {
   const [flyingId, setFlyingId] = useState(null);
   const toastTimer = useRef(null);
 
+  // column labels (per-user, persisted in board_settings)
+  const [labels, setLabels] = useState({});
+  const [editingStage, setEditingStage] = useState(null);
+  const [editValue, setEditValue] = useState("");
+
+  // live exchange rates
+  const [rates, setRates] = useState(null);
+  const [ratesUpdatedAt, setRatesUpdatedAt] = useState(null);
+  const [ratesLoading, setRatesLoading] = useState(false);
+  const [ratesError, setRatesError] = useState("");
+
   const [draggingId, setDraggingId] = useState(null);
   const [ghostRect, setGhostRect] = useState(null);
   const [hoverStage, setHoverStage] = useState(null);
   const dragInfo = useRef({ id: null, startX: 0, startY: 0, offsetX: 0, offsetY: 0, moved: false, originStage: null, width: 0, height: 0 });
   const columnRefs = useRef({});
 
+  const STAGES = STAGE_DEFAULTS.map((s) => ({ ...s, label: labels[s.id] || s.label }));
+
   const showToast = (msg) => {
     setToast(msg);
     clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(null), 2200);
   };
+
+  const loadRates = useCallback(async (force) => {
+    if (!force && ratesUpdatedAt && Date.now() - ratesUpdatedAt < RATES_TTL_MS) return;
+    setRatesLoading(true);
+    setRatesError("");
+    try {
+      const r = await fetchRates();
+      setRates(r);
+      setRatesUpdatedAt(Date.now());
+    } catch (e) {
+      setRatesError(e.message || "Не удалось получить курсы");
+    } finally {
+      setRatesLoading(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ratesUpdatedAt]);
 
   // ---- auth guard + initial load ----
   useEffect(() => {
@@ -100,10 +173,24 @@ export default function BoardPage() {
         router.replace("/login");
         return;
       }
+      const uid = data.session.user.id;
       if (mounted) setUserEmail(data.session.user.email || "");
-      const savedCurrency = window.localStorage.getItem("crm:currency");
-      if (savedCurrency && CURRENCIES[savedCurrency]) setCurrency(savedCurrency);
+
       await loadDeals();
+
+      const { data: settings } = await supabase
+        .from("board_settings")
+        .select("*")
+        .eq("user_id", uid)
+        .maybeSingle();
+      if (settings) {
+        setLabels(settings.column_labels || {});
+        setCurrency(settings.currency || "UAH");
+      } else {
+        await supabase.from("board_settings").insert({ user_id: uid, column_labels: {}, currency: "UAH" });
+      }
+
+      await loadRates(true);
       if (mounted) setLoading(false);
     })();
     return () => { mounted = false; };
@@ -122,9 +209,36 @@ export default function BoardPage() {
     setDeals(data || []);
   };
 
+  const saveSettings = async (nextLabels, nextCurrency) => {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const uid = sessionData.session?.user?.id;
+    if (!uid) return;
+    const { error } = await supabase
+      .from("board_settings")
+      .upsert({ user_id: uid, column_labels: nextLabels, currency: nextCurrency, updated_at: new Date().toISOString() });
+    if (error) setSaveError(error.message);
+  };
+
   const changeCurrency = (c) => {
     setCurrency(c);
-    window.localStorage.setItem("crm:currency", c);
+    saveSettings(labels, c);
+  };
+
+  const startEditLabel = (stage) => {
+    setEditingStage(stage.id);
+    setEditValue(stage.label);
+  };
+
+  const commitEditLabel = () => {
+    if (!editingStage) return;
+    const trimmed = editValue.trim();
+    const original = STAGE_DEFAULTS.find((s) => s.id === editingStage)?.label || "";
+    const next = { ...labels };
+    if (trimmed && trimmed !== original) next[editingStage] = trimmed.slice(0, 24);
+    else delete next[editingStage];
+    setLabels(next);
+    saveSettings(next, currency);
+    setEditingStage(null);
   };
 
   const addDeal = async (e) => {
@@ -198,7 +312,9 @@ export default function BoardPage() {
   });
 
   const totals = STAGES.reduce((acc, s) => {
-    acc[s.id] = filtered.filter((d) => d.stage === s.id).reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
+    acc[s.id] = filtered
+      .filter((d) => d.stage === s.id)
+      .reduce((sum, d) => sum + convert(d.amount, d.currency || "UAH", currency, rates), 0);
     return acc;
   }, {});
 
@@ -259,6 +375,13 @@ export default function BoardPage() {
 
   const draggedDeal = draggingId ? (deals || []).find((d) => d.id === draggingId) : null;
 
+  const ratesAgeLabel = () => {
+    if (!ratesUpdatedAt) return "";
+    const mins = Math.floor((Date.now() - ratesUpdatedAt) / 60000);
+    if (mins < 1) return "только что";
+    return `${mins} мин назад`;
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center relative z-10">
@@ -269,7 +392,7 @@ export default function BoardPage() {
 
   return (
     <div className="min-h-screen p-4 pb-16 relative z-10 touch-pan-y">
-      <header className="flex justify-between items-start flex-wrap gap-3 mb-4">
+      <header className="flex justify-between items-start flex-wrap gap-3 mb-3">
         <div>
           <div className="text-[10px] text-term-muted tracking-wider">root@crm-terminal:~$</div>
           <h1 className="font-bold text-2xl flex items-center gap-2" style={{ textShadow: "0 0 12px rgba(0,255,106,0.45)" }}>
@@ -279,17 +402,6 @@ export default function BoardPage() {
           <div className="text-[11px] text-term-muted mt-1">{userEmail}</div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex border border-term-border rounded-lg overflow-hidden">
-            {Object.entries(CURRENCIES).map(([code, c]) => (
-              <button
-                key={code}
-                onClick={() => changeCurrency(code)}
-                className={`px-3 py-2 text-sm font-bold ${currency === code ? "bg-term-accentSoft text-term-accent" : "bg-term-panel text-term-muted"}`}
-              >
-                {c.symbol}
-              </button>
-            ))}
-          </div>
           <button
             onClick={() => setShowForm(true)}
             className="flex items-center gap-1.5 border border-term-accent text-term-accent rounded-lg px-3.5 py-2 text-xs font-bold"
@@ -301,6 +413,35 @@ export default function BoardPage() {
           </button>
         </div>
       </header>
+
+      {/* currency / rates bar */}
+      <div className="flex items-center gap-2 flex-wrap mb-4">
+        <div className="flex border border-term-border rounded-lg overflow-hidden">
+          {CURRENCY_ORDER.map((code) => (
+            <button
+              key={code}
+              onClick={() => changeCurrency(code)}
+              title={code}
+              className={`px-2.5 py-2 text-xs font-bold ${currency === code ? "bg-term-accentSoft text-term-accent" : "bg-term-panel text-term-muted"}`}
+            >
+              {CURRENCIES[code].symbol}
+            </button>
+          ))}
+        </div>
+        <button
+          onClick={() => loadRates(true)}
+          disabled={ratesLoading}
+          className="flex items-center gap-1.5 border border-term-border rounded-lg px-2.5 py-2 text-[10px] text-term-muted"
+          title="Обновить курсы"
+        >
+          <RefreshCw size={12} className={ratesLoading ? "animate-spin" : ""} />
+          {ratesError ? (
+            <span className="text-term-danger">ошибка курсов</span>
+          ) : (
+            <span>курс: {ratesAgeLabel()}</span>
+          )}
+        </button>
+      </div>
 
       <div className="flex items-center gap-2 bg-term-panel border border-term-border rounded-lg px-3 py-2 mb-4 max-w-md">
         <Search size={14} className="text-term-muted" />
@@ -322,6 +463,7 @@ export default function BoardPage() {
         {STAGES.map((stage) => {
           const stageDeals = filtered.filter((d) => d.stage === stage.id);
           const isOver = hoverStage === stage.id && draggingId;
+          const isEditing = editingStage === stage.id;
           return (
             <div
               key={stage.id}
@@ -329,14 +471,33 @@ export default function BoardPage() {
               className="border rounded-xl p-3.5 flex flex-col min-h-[200px] bg-term-panel transition-shadow"
               style={{ borderColor: isOver ? "#00ff6a" : "#1d3226", boxShadow: isOver ? "0 0 0 1px #00ff6a, 0 0 24px -4px rgba(0,255,106,0.45)" : "0 1px 0 rgba(0,255,106,0.03)" }}
             >
-              <div className="flex justify-between items-start mb-1">
-                <div>
-                  <div className="font-bold text-sm tracking-wide">{stage.label}</div>
+              <div className="flex justify-between items-start mb-1 gap-1.5">
+                <div className="flex-1 min-w-0">
+                  {isEditing ? (
+                    <div className="flex items-center gap-1">
+                      <input
+                        autoFocus
+                        value={editValue}
+                        maxLength={24}
+                        onChange={(e) => setEditValue(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") commitEditLabel(); if (e.key === "Escape") setEditingStage(null); }}
+                        className="bg-black/40 border border-term-accent rounded px-1.5 py-1 text-sm font-bold w-full min-w-0"
+                      />
+                      <button onClick={commitEditLabel} className="text-term-accent shrink-0"><Check size={16} /></button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1.5 group">
+                      <div className="font-bold text-sm tracking-wide truncate">{stage.label}</div>
+                      <button onClick={() => startEditLabel(stage)} className="text-term-muted shrink-0" title="Переименовать колонку">
+                        <Pencil size={11} />
+                      </button>
+                    </div>
+                  )}
                   <div className="text-[11px] text-term-muted mt-0.5">// {stage.note}</div>
                 </div>
-                <div className="text-xs text-term-accent border border-term-border rounded-full px-2 py-0.5">{stageDeals.length}</div>
+                <div className="text-xs text-term-accent border border-term-border rounded-full px-2 py-0.5 shrink-0">{stageDeals.length}</div>
               </div>
-              <div className="text-xs text-term-cyan mb-2.5 mt-1.5">{formatMoney(totals[stage.id], currency)}</div>
+              <div className="text-xs text-term-cyan mb-2.5 mt-1.5">{formatMoney(totals[stage.id], currency, rates, currency)}</div>
 
               <div className="flex flex-col gap-2 flex-1">
                 {stageDeals.length === 0 && (
@@ -382,7 +543,7 @@ export default function BoardPage() {
                         )}
                         {Number(d.amount) > 0 && (
                           <div className="flex items-center gap-1.5 text-xs text-term-accent font-bold mt-1">
-                            <Banknote size={12} /> {formatMoney(d.amount, currency)}
+                            <Banknote size={12} /> {formatMoney(d.amount, currency, rates, d.currency || "UAH")}
                           </div>
                         )}
                         {d.description && (
@@ -444,7 +605,8 @@ export default function BoardPage() {
                                 key={s.id}
                                 disabled={s.id === d.stage}
                                 onClick={() => quickMove(d, s.id)}
-                                className="border border-term-border rounded-md py-1.5 text-[9.5px] font-bold text-term-cyan disabled:opacity-40 disabled:text-term-muted"
+                                title={s.label}
+                                className="border border-term-border rounded-md py-1.5 px-1 text-[9.5px] font-bold text-term-cyan disabled:opacity-40 disabled:text-term-muted truncate"
                               >
                                 {s.label}
                               </button>
@@ -515,7 +677,7 @@ export default function BoardPage() {
               </label>
               <label className="text-[11px] text-term-muted font-semibold flex flex-col gap-1 flex-1">
                 сумма ({CURRENCIES[currency].symbol})
-                <input type="number" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })}
+                <input type="number" step="any" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })}
                   className="bg-black/40 border border-term-border rounded-md px-2.5 py-2 text-sm text-term-text" placeholder="150000" />
               </label>
             </div>
