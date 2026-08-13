@@ -22,11 +22,7 @@ export async function POST(request) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
 
-  if (!adminConfigured) {
-    return NextResponse.json(
-      { ok: false, error: "Supabase admin не настроен (SUPABASE_SERVICE_ROLE_KEY)" },
-      { status: 500 }
-    );
+  куплю 20 тонн подсолнечного масла ТОВ Агропродукт
   }
   const ownerId = process.env.LEADS_OWNER_USER_ID;
   if (!ownerId) {
