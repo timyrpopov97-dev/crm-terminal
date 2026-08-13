@@ -19,9 +19,9 @@ export async function POST(request) {
   // as secret_token when calling Telegram's setWebhook.
   const secret = request.headers.get("x-telegram-bot-api-secret-token");
   if (process.env.TELEGRAM_WEBHOOK_SECRET && secret !== process.env.TELEGRAM_WEBHOOK_SECRET) {
-        return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-    }
-}
+    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
+
   const ownerId = process.env.LEADS_OWNER_USER_ID;
   if (!ownerId) {
     return NextResponse.json(
@@ -58,7 +58,7 @@ export async function POST(request) {
       phone: result.phone || "",
       email: "",
       amount: 0,
-      description: `[Авто-лид из Telegram] ${result.reasoning}\n\nИсходное сообщение:\n${text}`.slice(0, 2000),
+      description: [Авто-лид из Telegram] ${result.reasoning}\n\nИсходное сообщение:\n${text}.slice(0, 2000),
       currency: "UAH",
       stage: "lead",
       source: "telegram",
@@ -78,4 +78,3 @@ export async function POST(request) {
 export async function GET() {
   return NextResponse.json({ ok: true, info: "Telegram lead webhook is alive. Use POST for real updates." });
 }
-
