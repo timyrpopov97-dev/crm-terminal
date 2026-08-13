@@ -2,8 +2,6 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin, adminConfigured } from "../../../lib/supabaseAdmin";
 import { classifyLead } from "../../../lib/anthropic";
 
-// Edit this to match what you're actually selling. Be specific — the more
-// precise the criteria, the better the AI filters out irrelevant companies.
 const CRITERIA =
   "Оптовый покупатель подсолнечного масла или пищевого сырья/жиров: " +
   "маслоэкстракционные заводы, дистрибьюторы продуктов питания, " +
@@ -14,9 +12,6 @@ const CRITERIA =
   "нужно масло или похожее сырьё.";
 
 export async function POST(request) {
-  // Optional shared-secret check so random people can't POST fake leads
-  // into your CRM. Set TELEGRAM_WEBHOOK_SECRET and pass the same value
-  // as secret_token when calling Telegram's setWebhook.
   const secret = request.headers.get("x-telegram-bot-api-secret-token");
   if (process.env.TELEGRAM_WEBHOOK_SECRET && secret !== process.env.TELEGRAM_WEBHOOK_SECRET) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
@@ -74,7 +69,6 @@ export async function POST(request) {
   }
 }
 
-// Simple health check — open this URL in a browser to confirm it's deployed.
 export async function GET() {
   return NextResponse.json({ ok: true, info: "Telegram lead webhook is alive. Use POST for real updates." });
 }
