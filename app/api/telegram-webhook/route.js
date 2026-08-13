@@ -19,11 +19,9 @@ export async function POST(request) {
   // as secret_token when calling Telegram's setWebhook.
   const secret = request.headers.get("x-telegram-bot-api-secret-token");
   if (process.env.TELEGRAM_WEBHOOK_SECRET && secret !== process.env.TELEGRAM_WEBHOOK_SECRET) {
-    return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
-  }
-
-  куплю 20 тонн подсолнечного масла ТОВ Агропродукт
-  }
+        return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    }
+}
   const ownerId = process.env.LEADS_OWNER_USER_ID;
   if (!ownerId) {
     return NextResponse.json(
