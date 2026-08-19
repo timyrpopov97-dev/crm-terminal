@@ -1,35 +1,28 @@
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
 const MODEL = "claude-haiku-4-5-20251001";
 
-/**
- * Asks Claude whether a raw text (e.g. a Telegram trading-group post)
- * mentions a company that plausibly matches the given buying criteria.
- * Returns { isMatch, companyName, phone, reasoning }.
- */
 export async function classifyLead(text, criteria) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    throw new Error("ANTHROPIC_API_KEY не настроен в переменных окружения");
+    throw new Error("ANTHROPIC_API_KEY not set");
   }
 
-  const prompt = `Ты помогаешь отделу продаж отбирать входящие лиды из потока сообщений.
+  const prompt = `You are a B2B lead classifier. Analyze this message.
 
-Критерий подходящего клиента:
+Criteria for a qualified lead:
 ${criteria}
 
-Вот сырое сообщение (например, из торгового Telegram-чата или экспортного хаба):
+Message from trading chat:
 """
 ${text}
 """
 
-Определи:
-1. Упоминается ли в сообщении конкретная компания/покупатель (не просто общий пост без названия)?
-2. Подходит ли эта компания под критерий выше — то есть могла бы она реально быть покупателем? Если профиль компании явно не связан с критерием (например, торгует мороженым, а критерий — масло) и в тексте нет прямого запроса на этот товар — считай, что НЕ подходит.
+Determine:
+1. Is a specific company/buyer mentioned?
+2. Does it match the criteria?
 
-Если название компании явно не указано, но есть явный запрос ("нужен покупатель подсолнечного масла, объём 20 тонн") — можно засчитать как match с companyName: null, это тоже полезный лид.
-
-Ответь СТРОГО в формате JSON, без пояснений вокруг, без markdown:
-{"isMatch": true, "companyName": "название или null", "phone": "телефон если есть в тексте, иначе null", "reasoning": "одна короткая фраза на русском, почему да/нет"}`;
+Respond ONLY in JSON format, no explanation:
+{"isMatch": true/false, "companyName": "name or null", "phone": "phone or null", "reasoning": "short reason in English"}`;
 
   const res = await fetch(ANTHROPIC_API_URL, {
     method: "POST",
@@ -47,17 +40,13 @@ ${text}
 
   if (!res.ok) {
     const errText = await res.text();
-    throw new Error(`Anthropic API error ${res.status}: ${errText.slice(0, 300)}`);
+    throw new Error(`API error ${res.status}`);
   }
 
   const data = await res.json();
   const textBlock = (data.content || []).find((c) => c.type === "text");
-  if (!textBlock) throw new Error("Пустой ответ от модели");
+  if (!textBlock) throw new Error("Empty response");
 
   const cleaned = textBlock.text.replace(/```json|```/g, "").trim();
-  try {
-    return JSON.parse(cleaned);
-  } catch {
-    throw new Error("Не удалось разобрать ответ модели как JSON: " + cleaned.slice(0, 200));
-  }
+  return JSON.parse(cleaned);
 }
