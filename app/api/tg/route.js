@@ -9,7 +9,7 @@ export async function POST(request) {
   try {
     const update = await request.json();
     const message = update.channel_post || update.message;
-    const text = message?.text  message?.caption  "";
+    const text = message?.text || message?.caption || "";
 
     if (!text || text.trim().length < 5) {
       return NextResponse.json({ ok: true, skipped: "no text" });
