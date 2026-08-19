@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabaseClient";
 import {
   Phone, Mail, Plus, X, Trash2, Search, Building2, Banknote,
-  GripVertical, Zap, FileText, Copy, MessageCircle, Send,
+  GripVertical, Zap, FileText, Copy, MessageCircle, Send, Bot,
   CalendarClock, LogOut, Terminal, Pencil, Check, RefreshCw,
 } from "lucide-react";
 
@@ -590,7 +590,12 @@ export default function BoardPage() {
                           onPointerCancel={endDrag}
                         >
                           <GripVertical size={13} className="text-term-muted" />
-                          <span className="font-bold text-sm">{d.name}</span>
+                          <span className="font-bold text-sm truncate">{d.name}</span>
+                          {d.source === "telegram" && (
+                            <span title="Авто-лид из Telegram" className="text-term-cyan shrink-0">
+                              <Bot size={12} />
+                            </span>
+                          )}
                         </div>
                         <button className="text-term-muted p-1" onClick={(e) => { e.stopPropagation(); removeDeal(d.id); }}>
                           <Trash2 size={13} />
