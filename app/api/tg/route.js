@@ -11,6 +11,31 @@ const supabase = serviceKey && supabaseUrl
   ? createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } })
   : null;
 
+function extractEmail(text) {
+  const emailRegex = /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+)/gi;
+  const match = text.match(emailRegex);
+  return match ? match[0] : "";
+}
+
+function extractName(text) {
+  const namePatterns = [
+    /(?:меня зовут|мне зовут|я\s+([а-яА-ЯёЁ\s]+?)(?:\.|,|$))/i,
+    /^([а-яА-ЯёЁ]+\s+[а-яА-ЯёЁ]+)/,
+  ];
+  
+  for (const pattern of namePatterns) {
+    const match = text.match(pattern);
+    if (match) return match[1] || match[0];
+  }
+  return "";
+}
+
+function extractUsername(text) {
+  const usernameRegex = /@([a-zA-Z0-9_]{5,32})/;
+  const match = text.match(usernameRegex);
+  return match ? match[1] : "";
+}
+
 export async function POST(request) {
   const secret = request.headers.get("x-telegram-bot-api-secret-token");
   if (process.env.TELEGRAM_WEBHOOK_SECRET && secret !== process.env.TELEGRAM_WEBHOOK_SECRET) {
@@ -21,6 +46,7 @@ export async function POST(request) {
     const update = await request.json();
     const message = update.channel_post || update.message;
     const text = message?.text || message?.caption || "";
+    const fromUsername = message?.from?.username || "";
 
     if (!text || text.trim().length < 5) {
       return NextResponse.json({ ok: true, skipped: "no text" });
@@ -46,14 +72,26 @@ export async function POST(request) {
       return NextResponse.json({ ok: true, warning: "Owner ID missing" });
     }
 
+    const email = extractEmail(text);
+    const name = extractName(text) || result.companyName || "Lead from Telegram";
+    const username = extractUsername(text) || fromUsername;
+    const telegramLink = username ? `https://t.me/${username}` : "";
+
+    const description = `[Auto-lead] ${result.reasoning}
+
+Сообщение:
+${text}
+
+${telegramLink ? `Telegram: ${telegramLink}` : ""}`.slice(0, 2000);
+
     const { error } = await supabase.from("deals").insert({
       user_id: ownerId,
-      name: result.companyName || "Lead from Telegram",
+      name: name,
       company: result.companyName || "",
       phone: result.phone || "",
-      email: "",
+      email: email || "",
       amount: 0,
-      description: `[Auto-lead] ${result.reasoning}\n\nMessage:\n${text}`.slice(0, 2000),
+      description: description,
       currency: "UAH",
       stage: "lead",
       source: "telegram",
@@ -64,8 +102,8 @@ export async function POST(request) {
       return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
     }
 
-    console.log("[TG] Lead added:", result.companyName);
-    return NextResponse.json({ ok: true, added: result.companyName });
+    console.log("[TG] Lead added:", name);
+    return NextResponse.json({ ok: true, added: name });
   } catch (e) {
     console.error("[TG] Error:", e.message);
     return NextResponse.json({ ok: false, error: e.message }, { status: 500 });
