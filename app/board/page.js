@@ -412,6 +412,12 @@ export default function BoardPage() {
             className="flex items-center gap-1.5 border border-term-accent text-term-accent rounded-lg px-3.5 py-2 text-xs font-bold"
           >
             <Plus size={15} /> НОВЫЙ_ЛИД
+              <button
+  onClick={() => window.open('https://t.me/sfxtrueog', '_blank')}
+  className="px-4 py-2 bg-term-cyan text-term-bg rounded font-semibold hover:opacity-80 transition"
+>
+  📱 Мой контакт
+</button>
           </button>
           <button onClick={logout} title="Выйти" className="border border-term-border text-term-muted rounded-lg px-2.5 py-2">
             <LogOut size={15} />
