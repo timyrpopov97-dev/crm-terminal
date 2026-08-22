@@ -8,108 +8,124 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 const supabase = serviceKey && supabaseUrl
-  ? createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } })
-  : null;
+? createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } })
+: null;
 
 function extractEmail(text) {
-  const emailRegex = /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+)/gi;
-  const match = text.match(emailRegex);
-  return match ? match[0] : "";
+const emailRegex = /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+)/gi;
+const match = text.match(emailRegex);
+return match ? match[0] : "";
 }
 
 function extractName(text) {
-  const namePatterns = [
-    /(?:меня зовут|мне зовут|я\s+([а-яА-ЯёЁ\s]+?)(?:\.|,|$))/i,
-    /^([а-яА-ЯёЁ]+\s+[а-яА-ЯёЁ]+)/,
-  ];
-  
-  for (const pattern of namePatterns) {
-    const match = text.match(pattern);
-    if (match) return match[1] || match[0];
-  }
-  return "";
+// Ищет имя ПОСЛЕ "меня зовут"
+const match = text.match(/(?:меня зовут|мне зовут|я\s+)([а-яА-ЯёЁ\s\-]+?)(?:\.|,|$)/i);
+if (match && match[1]) {
+return match[1].trim();
+}
+
+// Ищет две слова подряд в начале (Иван Петров)
+const nameMatch = text.match(/^([а-яА-ЯёЁ]+\s+[а-яА-ЯёЁ]+)/);
+if (nameMatch) return nameMatch[1];
+
+return "";
+}
+
+function extractPhone(text) {
+const phoneRegex = /(\+?[0-9]{1,3}[\s\-]?[\(]?[0-9]{2,4}[\)]?[\s\-]?[0-9]{2,4}[\s\-]?[0-9]{2,4})/;
+const match = text.match(phoneRegex);
+return match ? match[0] : "";
 }
 
 function extractUsername(text) {
-  const usernameRegex = /@([a-zA-Z0-9_]{5,32})/;
-  const match = text.match(usernameRegex);
-  return match ? match[1] : "";
+const usernameRegex = /@([a-zA-Z0-9_]{5,32})/;
+const match = text.match(usernameRegex);
+return match ? match[1] : "";
 }
 
 export async function POST(request) {
-  const secret = request.headers.get("x-telegram-bot-api-secret-token");
-  if (process.env.TELEGRAM_WEBHOOK_SECRET && secret !== process.env.TELEGRAM_WEBHOOK_SECRET) {
-    return NextResponse.json({ ok: false }, { status: 401 });
-  }
+const secret = request.headers.get("x-telegram-bot-api-secret-token");
+if (process.env.TELEGRAM_WEBHOOK_SECRET && secret !== process.env.TELEGRAM_WEBHOOK_SECRET) {
+return NextResponse.json({ ok: false }, { status: 401 });
+}
 
-  try {
-    const update = await request.json();
-    const message = update.channel_post || update.message;
-    const text = message?.text || message?.caption || "";
-    const fromUsername = message?.from?.username || "";
+try {
+const update = await request.json();
+const message = update.channel_post || update.message;
+const text = message?.text || message?.caption || "";
+const fromUsername = message?.from?.username || "";
+const fromId = message?.from?.id || "";
 
-    if (!text || text.trim().length < 5) {
-      return NextResponse.json({ ok: true, skipped: "no text" });
-    }
+if (!text || text.trim().length < 5) {
+return NextResponse.json({ ok: true, skipped: "no text" });
+}
 
-    console.log("[TG] Message:", text.slice(0, 100));
+console.log("[TG] Message:", text.slice(0, 100));
 
-    const result = await classifyLead(text, CRITERIA);
+const result = await classifyLead(text, CRITERIA);
 
-    if (!result.isMatch) {
-      console.log("[TG] Not a match:", result.reasoning);
-      return NextResponse.json({ ok: true, skipped: true, reason: result.reasoning });
-    }
+if (!result.isMatch) {
+console.log("[TG] Not a match:", result.reasoning);
+return NextResponse.json({ ok: true, skipped: true, reason: result.reasoning });
+}
 
-    if (!supabase) {
-      console.error("[TG] Supabase not configured");
-      return NextResponse.json({ ok: true, warning: "Supabase not ready" });
-    }
+if (!supabase) {
+console.error("[TG] Supabase not configured");
+return NextResponse.json({ ok: true, warning: "Supabase not ready" });
+}
 
-    const ownerId = process.env.LEADS_OWNER_USER_ID;
-    if (!ownerId) {
-      console.error("[TG] No owner ID");
-      return NextResponse.json({ ok: true, warning: "Owner ID missing" });
-    }
+const ownerId = process.env.LEADS_OWNER_USER_ID;
+if (!ownerId) {
+console.error("[TG] No owner ID");
+return NextResponse.json({ ok: true, warning: "Owner ID missing" });
+}
 
-    const email = extractEmail(text);
-    const name = extractName(text) || result.companyName || "Lead from Telegram";
-    const username = extractUsername(text) || fromUsername;
-    const telegramLink = username ? `https://t.me/${username}` : "";
+const email = extractEmail(text);
+const phone = extractPhone(text);
+const username = extractUsername(text) || fromUsername;
+const name = extractName(text) || result.companyName || "Lead from Telegram";
 
-    const description = `[Auto-lead] ${result.reasoning}
+// Кнопка на Telegram профиль или чат
+let telegramLink = "";
+if (username) {
+telegramLink = `https://t.me/${username}`;
+} else if (fromId) {
+telegramLink = `https://t.me/${fromId}`;
+}
 
-Сообщение:
+const description = `[Auto-lead] ${result.reasoning}
+
+**Сообщение от клиента:**
 ${text}
 
-${telegramLink ? `Telegram: ${telegramLink}` : ""}`.slice(0, 2000);
+${telegramLink ? `**Написать в Telegram:** ${telegramLink}` : "Контакты не найдены - проверьте историю чата"}`.slice(0, 2000);
 
-    const { error } = await supabase.from("deals").insert({
-      user_id: ownerId,
-      name: name,
-      company: result.companyName || "",
-      phone: result.phone || "",
-      email: email || "",
-      amount: 0,
-      description: description,
-      currency: "UAH",
-      stage: "lead",
-      source: "telegram",
-    });
+const { error } = await supabase.from("deals").insert({
+user_id: ownerId,
+name: name,
+company: result.companyName || "",
+phone: phone || "",
+email: email || "",
+amount: 0,
+description: description,
+currency: "UAH",
+stage: "lead",
+source: "telegram",
+});
 
-    if (error) {
-      console.error("[TG] DB error:", error.message);
-      return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-    }
+if (error) {
+console.error("[TG] DB error:", error.message);
+return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+}
 
-    console.log("[TG] Lead added:", name);
-    return NextResponse.json({ ok: true, added: name });
-  } catch (e) {
-    console.error("[TG] Error:", e.message);
-    return NextResponse.json({ ok: false, error: e.message }, { status: 500 });
-  }
+console.log("[TG] Lead added:", name);
+return NextResponse.json({ ok: true, added: name });
+} catch (e) {
+console.error("[TG] Error:", e.message);
+return NextResponse.json({ ok: false, error: e.message }, { status: 500 });
+}
 }
 
 export async function GET() {
-  return NextResponse.json({ ok: true, info: "Telegram webhook is alive" });
+return NextResponse.json({ ok: true, info: "Telegram webhook is alive" });
 }
