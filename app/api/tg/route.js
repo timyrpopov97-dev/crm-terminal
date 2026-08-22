@@ -58,7 +58,7 @@ const message = update.channel_post || update.message;
 const text = message?.text || message?.caption || "";
 const fromUsername = message?.from?.username || "";
 const fromId = message?.from?.id || "";
-const messageId = message?.message_id || "";
+const timestamp = message?.date ? new Date(message.date * 1000).toLocaleString("ru-RU") : new Date().toLocaleString("ru-RU");
 
 if (!text || text.trim().length < 5) {
 return NextResponse.json({ ok: true, skipped: "no text" });
@@ -66,7 +66,6 @@ return NextResponse.json({ ok: true, skipped: "no text" });
 
 console.log("[TG] Message:", text.slice(0, 100));
 
-// Проверяем дубликаты по хешу сообщения
 const messageHash = generateMessageHash(text);
 const ownerId = process.env.LEADS_OWNER_USER_ID;
 
@@ -115,15 +114,24 @@ telegramLink = `https://t.me/${username}`;
 telegramLink = `https://t.me/${fromId}`;
 }
 
+const fullMessageData = {
+text: text,
+timestamp: timestamp,
+telegramLink: telegramLink,
+hash: messageHash
+};
+
 const description = `[Auto-lead] ${result.reasoning}
 
-**Оригинальное сообщение:**
-${text}
+💬 НАЖМИТЕ "Текст сообщения" ВЫШЕ ДЛЯ ПОЛНЫХ ДЕТАЛЕЙ
 
-${telegramLink ? `**➜ Написать в Telegram:** ${telegramLink}` : "❌ Контакты не найдены - проверьте историю чата"}
+Контакты:
+- Email: ${email || "не указан"}
+- Телефон: ${phone || "не указан"}
+- Telegram: ${telegramLink ? `[Написать](${telegramLink})` : "не найден"}
 
 ---
-Hash: ${messageHash}`;
+${JSON.stringify(fullMessageData)}`;
 
 const descriptionTrimmed = description.length > 2000 ? description.slice(0, 1997) + "..." : description;
 
