@@ -18,13 +18,11 @@ return match ? match[0] : "";
 }
 
 function extractName(text) {
-// Ищет имя ПОСЛЕ "меня зовут"
 const match = text.match(/(?:меня зовут|мне зовут|я\s+)([а-яА-ЯёЁ\s\-]+?)(?:\.|,|$)/i);
 if (match && match[1]) {
 return match[1].trim();
 }
 
-// Ищет две слова подряд в начале (Иван Петров)
 const nameMatch = text.match(/^([а-яА-ЯёЁ]+\s+[а-яА-ЯёЁ]+)/);
 if (nameMatch) return nameMatch[1];
 
@@ -85,7 +83,6 @@ const phone = extractPhone(text);
 const username = extractUsername(text) || fromUsername;
 const name = extractName(text) || result.companyName || "Lead from Telegram";
 
-// Кнопка на Telegram профиль или чат
 let telegramLink = "";
 if (username) {
 telegramLink = `https://t.me/${username}`;
@@ -98,7 +95,9 @@ const description = `[Auto-lead] ${result.reasoning}
 **Сообщение от клиента:**
 ${text}
 
-${telegramLink ? `**Написать в Telegram:** ${telegramLink}` : "Контакты не найдены - проверьте историю чата"}`.slice(0, 2000);
+${telegramLink ? `**Написать в Telegram:** ${telegramLink}` : "Контакты не найдены - проверьте историю чата"}`;
+
+const descriptionTrimmed = description.length > 2000 ? description.slice(0, 1997) + "..." : description;
 
 const { error } = await supabase.from("deals").insert({
 user_id: ownerId,
@@ -107,7 +106,7 @@ company: result.companyName || "",
 phone: phone || "",
 email: email || "",
 amount: 0,
-description: description,
+description: descriptionTrimmed,
 currency: "UAH",
 stage: "lead",
 source: "telegram",
