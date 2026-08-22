@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { classifyLead } from "../../../lib/anthropic";
 import { createClient } from "@supabase/supabase-js";
+import crypto from "crypto";
 
 const CRITERIA = "Sunflower oil wholesale buyers, food distributors, manufacturers: factories, oil extractors, mayonnaise/canned/baking/fast food producers. Exclude companies with no food connection unless they explicitly request oil or similar products.";
 
@@ -41,6 +42,10 @@ const match = text.match(usernameRegex);
 return match ? match[1] : "";
 }
 
+function generateMessageHash(text) {
+return crypto.createHash("md5").update(text).digest("hex");
+}
+
 export async function POST(request) {
 const secret = request.headers.get("x-telegram-bot-api-secret-token");
 if (process.env.TELEGRAM_WEBHOOK_SECRET && secret !== process.env.TELEGRAM_WEBHOOK_SECRET) {
@@ -53,12 +58,33 @@ const message = update.channel_post || update.message;
 const text = message?.text || message?.caption || "";
 const fromUsername = message?.from?.username || "";
 const fromId = message?.from?.id || "";
+const messageId = message?.message_id || "";
 
 if (!text || text.trim().length < 5) {
 return NextResponse.json({ ok: true, skipped: "no text" });
 }
 
 console.log("[TG] Message:", text.slice(0, 100));
+
+// Проверяем дубликаты по хешу сообщения
+const messageHash = generateMessageHash(text);
+const ownerId = process.env.LEADS_OWNER_USER_ID;
+
+if (supabase && ownerId) {
+const { data: existingLead } = await supabase
+.from("deals")
+.select("id")
+.eq("user_id", ownerId)
+.eq("source", "telegram")
+.ilike("description", `%${messageHash}%`)
+.limit(1)
+.single();
+
+if (existingLead) {
+console.log("[TG] Duplicate message, skipping");
+return NextResponse.json({ ok: true, skipped: "duplicate message" });
+}
+}
 
 const result = await classifyLead(text, CRITERIA);
 
@@ -72,7 +98,6 @@ console.error("[TG] Supabase not configured");
 return NextResponse.json({ ok: true, warning: "Supabase not ready" });
 }
 
-const ownerId = process.env.LEADS_OWNER_USER_ID;
 if (!ownerId) {
 console.error("[TG] No owner ID");
 return NextResponse.json({ ok: true, warning: "Owner ID missing" });
@@ -92,10 +117,13 @@ telegramLink = `https://t.me/${fromId}`;
 
 const description = `[Auto-lead] ${result.reasoning}
 
-**Сообщение от клиента:**
+**Оригинальное сообщение:**
 ${text}
 
-${telegramLink ? `**Написать в Telegram:** ${telegramLink}` : "Контакты не найдены - проверьте историю чата"}`;
+${telegramLink ? `**➜ Написать в Telegram:** ${telegramLink}` : "❌ Контакты не найдены - проверьте историю чата"}
+
+---
+Hash: ${messageHash}`;
 
 const descriptionTrimmed = description.length > 2000 ? description.slice(0, 1997) + "..." : description;
 
